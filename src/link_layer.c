@@ -20,6 +20,47 @@
 #define CI0 0x00
 #define CI1 0x80
 
+int alarmFLag = FALSE;
+int alarmCount = 0;
+int timeout = 0;
+
+
+typedef enum
+{
+    START,
+    FLAG_RCV,
+    A_RCV,
+    C_RCV,
+    BCC1_OK,
+    STOP,
+    DATA_ESC,
+    DATA_READING,
+    DISC,
+    BCC2_OK,
+
+} State;
+
+State state = START;
+
+//HELPER FUNCTIONS
+int sendSupervisionFrame(int fd, unsigned char A, unsigned char C){
+    unsigned char frame[5];
+    frame[0] = FLAG;
+    frame[1] = A;
+    frame[2] = C;
+    frame[3] = A^C;
+    frame[4] = FLAG;
+
+    return writeBytesSerialPort(frame,5);
+}
+
+unsigned char readControlFrame(int fd);
+
+int BCC2(const unsigned char *data, int size);
+
+void alarmHandler(int signal);
+
+
 
 
 ////////////////////////////////////////////////
@@ -27,8 +68,109 @@
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    return openSerialPort(connectionParameters.serial_port, connectionParameters.baudRate);
+    int fd = openSerialPort(connectionParameters.serialPort,connectionParameters.baudRate);
+    if (fd<0) return -1;
+    unsigned char byte;
+    int timeout = connectionParameters.timeout;
+    int nRetransmissions = connectionParameters.nRetransmissions;
 
+    switch (connectionParameters.role)
+    {
+        case LlTx:{
+
+            while(connectionParameters.nRetransmissions > 0 && state != STOP){
+
+                sendSupervisionFrame(fd, A_SE, C_SET);
+                alarm(timeout);
+                state = START;
+
+                while(state != STOP && !alarmFLag){
+                    if (readBytesSerialPort(&byte,1) > 0){
+                        switch (state)
+                        {
+                            case START:
+                                if (byte == FLAG) state = FLAG_RCV;
+                                break;
+                            case FLAG_RCV:
+                                if (byte == A_RE) state = A_RCV;
+                                else if (byte != FLAG) state = START;
+                                break;
+                            case A_RCV:
+                                if (byte == C_UA) state = C_RCV;
+                                else if (byte == FLAG) state = FLAG_RCV;
+                                else state = START;
+                                break;
+                            case C_RCV:
+                                if (byte == (A_RE ^ C_UA)) state = BCC1_OK;
+                                else if (byte == FLAG) state = FLAG_RCV;
+                                else state = START;
+                                break;
+                            case BCC1_OK:
+                                if (byte == FLAG){
+                                    state = STOP;
+                                    alarm(0);
+                                    alarmFLag = FALSE;
+                                    return fd;
+                                }
+                                else state = START;
+                                break;
+                            default:
+                                break;
+                        }  
+                    }
+                }
+                connectionParameters.nRetransmissions--;
+            }
+        }
+        if (state != STOP){
+            return -1;
+        }
+        break;
+        case LlRx:{
+            while(state != STOP){
+                if (readBytesSerialPort(&byte,1) > 0){
+                    switch (state)
+                    {
+                        case START:
+                            if (byte == FLAG) state = FLAG_RCV;
+                            break;
+                        case FLAG_RCV:
+                            if (byte == A_SE) state = A_RCV;
+                            else if (byte != FLAG) state = START;
+                            break;
+                        case A_RCV:
+                            if (byte == C_SET) state = C_RCV;
+                            else if (byte == FLAG) state = FLAG_RCV;
+                            else state = START;
+                            break;
+                        case C_RCV:
+                            if (byte == (A_SE ^ C_SET)) state = BCC1_OK;
+                            else if (byte == FLAG) state = FLAG_RCV;
+                            else state = START;
+                            break;
+                        case BCC1_OK:
+                            if (byte == FLAG){
+                                state = STOP;
+                                sendSupervisionFrame(fd, A_RE, C_UA);
+                                return fd;
+                            }
+                            else state = START;
+                            break;
+                        default:
+                            break;
+                    }  
+                }
+            }
+            sendSupervisionFrame(fd, A_RE, C_UA);
+            break;
+
+    }
+    default:
+        return -1;
+        break;
+
+ }
+ return fd;
 }
 
 ////////////////////////////////////////////////
