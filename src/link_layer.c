@@ -2,6 +2,7 @@
 
 #include "link_layer.h"
 #include "serial_port.h"
+#include <cstddef>
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
@@ -23,6 +24,7 @@
 int alarmFLag = FALSE;
 int alarmCount = 0;
 int timeout = 0;
+int nRetransmissions = 0;
 
 
 typedef enum
@@ -178,29 +180,152 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    for (int i=0; i< bufSize; i++){
-        writeBytesSerialPort(buf, bufSize);
+    int framesize= bufSize + 6; // FLAG A C BCC1 BCC2 FLAG
+    unsigned char *frame = (unsigned char*)malloc(framesize);
+
+    frame[0] = FLAG;
+    frame[1] = A_SE;
+    frame[2] = CI0; 
+    frame[3] = frame[1] ^ frame[2]; 
+
+    memcpy(frame+4, buf, bufSize);
+    unsigned char BCC2 = buf[0];
+
+    for (int i = 1; i < bufSize; i++) {
+        BCC2 ^= buf[i];
     }
-    
+
+    int j = 4;
+
+    for (int i=0;i<bufSize;i++){
+        if (buf[i] == FLAG || buf[i] == DATA_ESC){
+            frame = realloc(frame, ++framesize);
+            frame[j++] = DATA_ESC;
+        }
+        else{
+            frame[j++] = buf[i];
+        }
+    }
+    frame[j++] = BCC2;
+    frame[j++] = FLAG;
+
+    // Transmitions logic -- review later
+
+    int currentransmitions = 0;
+    int rejected=0;
+    int accepted=0;
+
+    while (nRetransmissions >= currentransmitions){
+        writeBytesSerialPort(frame, framesize);
+        alarm(timeout);
+        state = START;
+        rejected=0;
+        accepted=0;
+
+        while (!alarmFLag && !rejected && !accepted){
+            writeBytesSerialPort(frame, framesize);
+            
+            
+           
+        }
+        if (accepted){
+            alarmFLag=FALSE;
+            break;
+        }
+        currentransmitions++;
+        }
+        free (frame);
+        if (accepted) return framesize;
+        else{
+            llclose();
+            return -1;
+        }
+        
+
+
+
+
     return bufSize;
 }
+
+    
+
+
+
+
+
+
+
+
+    
+
+    
+
+
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
-    // TODO: Implement this function
+    unsigned char byte;
+    unsigned char controlField;
 
-    return 0;
+    State state = START;
+
+    while (state != STOP){
+        if (readBytesSerialPort(&byte,1) > 0){
+            switch (state)
+            {
+                case START:
+                    if (byte == FLAG) state = FLAG_RCV;
+                    break;
+                case FLAG_RCV:
+                    if (byte == A_SE) state = A_RCV;
+                    else if (byte != FLAG) state = START;
+                    break;
+                case A_RCV:
+                    controlField = byte;
+                    state = C_RCV;
+                    break;
+                case C_RCV:
+                    if (byte == (A_SE ^ controlField)) state = BCC1_OK;
+                    else if (byte == FLAG) state = FLAG_RCV;
+                    else state = START;
+                    break;
+                case BCC1_OK:
+                    // Read data until FLAG is encountered
+                    int index = 0;
+                    while (TRUE) {
+                        if (readBytesSerialPort(&byte, 1) > 0) {
+                            if (byte == FLAG) {
+                                state = STOP;
+                                return index; // Return the size of the packet
+                            } else {
+                                packet[index++] = byte; // Store data byte
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    break;
+            }  
+        }
+    }
+
+
 }
+
 
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
 int llclose()
 {
-    // TODO: Implement this function
+    State state = START;
+    unsigned char byte;
+    (void) signal(SIGALRM, alarmHandler);
+    
 
     return 0;
 }
