@@ -1,9 +1,8 @@
 // Application layer protocol implementation
 
 #include "application_layer.h"
-
 #include <stdio.h>
-
+#include "link_layer.h"
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
@@ -12,12 +11,21 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     linkLayer.baudRate = baudRate;
     linkLayer.nRetransmissions = nTries;
     linkLayer.timeout = timeout;
-    //linkLayer.role = (role[0]== "LlTx") ? LlTx : LlRx
+    linkLayer.role = strcmp(role, "LlTx") ? LlTx : LlRx;
 
-    llopen(linkLayer);
+    if (llopen(linkLayer) < 0)
+    {
+        printf("Error\n");
+        return;
+    }
 
     if (linkLayer.role == LlTx)
     {
+        FILE *file = fopen(filename, "rb");
+        if (!file) {
+                perror("Failed opening file\n");
+                exit(-1);
+            }
         //Transmitter
         llwrite(NULL);
     }
@@ -26,5 +34,4 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         //Receiver
         llread(NULL);
     }
-
 }
