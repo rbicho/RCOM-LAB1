@@ -43,4 +43,18 @@ int llread(unsigned char *packet);
 // Return 0 on success or -1 on error.
 int llclose();
 
+// Will configure and manage timeout alarms during transmissions.
+void alarmHandler(int signal);
+
+unsigned char readControlFrame(int fd);
+
+int BCC2(const unsigned char *data, int size);
+
+int sendSupervisionFrame(int fd, unsigned char addressField, unsigned char controlField);
+
+int byteStuffing(const unsigned char *input, int inputSize, unsigned char *output);
+
+int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *output);
+
+
 #endif // _LINK_LAYER_H_

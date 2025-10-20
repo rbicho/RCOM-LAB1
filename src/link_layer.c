@@ -6,11 +6,13 @@
 #include "main.c"
 #include "link_layer.h"
 #include "application_layer.c"
-#include "serial_port.c"
+#include "serial_port.h"
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <stdio.h>
+
 
 #define FLAG 0x7E
 #define A_SE 0x03
@@ -77,6 +79,8 @@ int llopen(LinkLayer connectionParameters)
 {
     int fd = openSerialPort(connectionParameters.serialPort,connectionParameters.baudRate);
     if (fd<0) return -1;
+    State state = START;
+
     unsigned char byte;
     int timeout = connectionParameters.timeout;
     int nRetransmissions = connectionParameters.nRetransmissions;
@@ -85,11 +89,13 @@ int llopen(LinkLayer connectionParameters)
     {
         case LlTx:{
 
+            (void) signal(SIGALRM, alarmHandler);
+
             while(connectionParameters.nRetransmissions > 0 && state != STOP){
 
                 sendSupervisionFrame(fd, A_SE, C_SET);
                 alarm(timeout);
-                state = START;
+                alarmFLag = FALSE;
 
                 while(state != STOP && !alarmFLag){
                     if (readByteSerialPort(&byte,1) > 0){
@@ -158,7 +164,6 @@ int llopen(LinkLayer connectionParameters)
                         case BCC1_OK:
                             if (byte == FLAG){
                                 state = STOP;
-                                sendSupervisionFrame(fd, A_RE, C_UA);
                                 return fd;
                             }
                             else state = START;
@@ -196,6 +201,8 @@ int llwrite(const unsigned char *buf, int bufSize)
     memcpy(frame+4, buf, bufSize);
     unsigned char BCC2 = buf[0];
 
+
+    // Usar funcao BCC2
     for (int i = 1; i < bufSize; i++) {
         BCC2 ^= buf[i];
     }
@@ -214,43 +221,45 @@ int llwrite(const unsigned char *buf, int bufSize)
     frame[j++] = BCC2;
     frame[j++] = FLAG;
 
-    // Transmitions logic -- review later
+
 
     int currentransmitions = 0;
     int rejected=0;
     int accepted=0;
 
     while (nRetransmissions >= currentransmitions){
-        writeBytesSerialPort(frame, framesize);
+        alarmFLag=FALSE;
         alarm(timeout);
-        state = START;
         rejected=0;
         accepted=0;
 
         while (!alarmFLag && !rejected && !accepted){
             writeBytesSerialPort(frame, framesize);
-            
-            
-           
+            unsigned char response = readControlFrame(fd);
+
+            if (response == C_RR1 || response == C_RR0){
+                accepted=1;
+            }
+            else if (response == C_REJ0 || response == C_REJ1){
+                rejected=1;
+
+            }
+            else continue;
+
         }
         if (accepted){
-            alarmFLag=FALSE;
             break;
-        }
-        currentransmitions++;
-        }
-        free (frame);
-        if (accepted) return framesize;
-        else{
-            llclose();
-            return -1;
+            currentransmitions++;
         }
         
+    }
 
-
-
-
-    return bufSize;
+    free (frame);
+    if (accepted) return framesize;
+    else{
+        llclose();
+        return -1;
+    }
 }
 
     
@@ -275,6 +284,7 @@ int llread(unsigned char *packet)
 {
     unsigned char byte;
     unsigned char controlField;
+    int i =0;
 
     State state = START;
 
@@ -290,48 +300,126 @@ int llread(unsigned char *packet)
                     else if (byte != FLAG) state = START;
                     break;
                 case A_RCV:
-                    controlField = byte;
-                    state = C_RCV;
+                        if (byte == C_SET || byte == C_UA){
+                        state = C_RCV;
+                        controlField = byte;   
+                    }
+                    else if (byte == FLAG) state = FLAG_RCV;
+                    else if (byte == C_DISC) {
+                        sendSupervisionFrame(fd, A_RE, C_DISC);
+                        return 0;
+                    }
+                    else state = START;
                     break;
                 case C_RCV:
-                    if (byte == (A_SE ^ controlField)) state = BCC1_OK;
+                    if (byte == BCC(A_SE, controlField)) state = BCC1_OK;
                     else if (byte == FLAG) state = FLAG_RCV;
                     else state = START;
                     break;
-                case BCC1_OK: {
-                    // Read data until FLAG is encountered
-                    int index = 0;
-                    while (TRUE) {
-                        if (readByteSerialPort(&byte, 1) > 0) {
-                            if (byte == FLAG) {
-                                state = STOP;
-                                return index; // Return the size of the packet
-                            } else {
-                                packet[index++] = byte; // Store data byte
-                            }
+                case DATA_READING:
+                    if (byte == ESC) state = DATA_FOUND_ESC;
+                    else if (byte == FLAG){
+                        unsigned char bcc2 = packet[i-1];
+                        i--;
+                        packet[i] = '\0';
+                        unsigned char acc = packet[0];
+
+                        for (unsigned int j = 1; j < i; j++)
+                            acc ^= packet[j];
+
+                        if (bcc2 == acc){
+                            state = STOP_R;
+                            sendSupervisionFrame(fd, A_RE, C_RR(controlField));
+                            return i; 
                         }
+                        else{
+                            printf("Error: retransmition\n");
+                            sendSupervisionFrame(fd, A_RE, C_REJ(controlField));
+                            return -1;
+                        };
+
+                    }
+                    else{
+                        packet[i++] = byte;
                     }
                     break;
-                }
-                default:
+                case DATA_ESC
+                    state = DATA_READING;
+                    if (byte == ESC || byte == FLAG) packet[i++] = byte;
+                    else{
+                        packet[i++] = ESC;
+                        packet[i++] = byte;
+                    }
                     break;
-            }  
-        }
+                default: 
+                    break;
+                
+                
+            }
+        }  
     }
-    return -1;
-
+    return 0;
 }
+
+ 
+
 
 
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose()
-{
+int llclose(){
     State state = START;
     unsigned char byte;
     (void) signal(SIGALRM, alarmHandler);
-    
 
-    return 0;
+    while (nRetransmissions != 0 && state != STOP){
+
+        sendSupervisionFrame(fd, A_SE, C_DISC);
+        alarm(timeout);
+        alarmFLag = FALSE;
+
+        while(state != STOP && !alarmFLag){
+            if (readByteSerialPort(&byte,1) > 0){
+                switch (state)
+                {
+                    case START:
+                        if (byte == FLAG) state = FLAG_RCV;
+                        break;
+                    case FLAG_RCV:
+                        if (byte == A_RE) state = A_RCV;
+                        else if (byte != FLAG) state = START;
+                        break;
+                    case A_RCV:
+                        if (byte == C_DISC) state = C_RCV;
+                        else if (byte == FLAG) state = FLAG_RCV;
+                        else state = START;
+                        break;
+                    case C_RCV:
+                        if (byte == (A_RE ^ C_DISC)) state = BCC1_OK;
+                        else if (byte == FLAG) state = FLAG_RCV;
+                        else state = START;
+                        break;
+                    case BCC1_OK:
+                        if (byte == FLAG){
+                            state = STOP;
+                            alarm(0);
+                            alarmFLag = FALSE;
+                            sendSupervisionFrame(fd, A_SE, C_UA);
+                            closeSerialPort(fd);
+                            return 0;
+                        }
+                        else state = START;
+                        break;
+                    default:
+                        break;
+                }  
+            }
+        }
+        nRetransmissions--;
+    }
+    if (state != STOP) return -1;
+    sendSupervisionFrame(fd, A_ER, C_UA);
+    return closeSerialPort();
+
 }

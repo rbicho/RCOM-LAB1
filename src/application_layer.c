@@ -29,13 +29,11 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 exit(-1);
             }
         //Transmitter
-        llwrite(NULL);
+
     }
     else
     {
         //Receiver
-        llread(NULL);
     }
-    llclose(linkLayer);
 
 }
