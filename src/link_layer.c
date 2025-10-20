@@ -1,11 +1,16 @@
 // Link layer protocol implementation
 
-#include "link_layer.h"
-#include "serial_port.h"
-#include <cstddef>
-
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
+
+#include "main.c"
+#include "link_layer.h"
+#include "application_layer.c"
+#include "serial_port.c"
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <unistd.h>
 
 #define FLAG 0x7E
 #define A_SE 0x03
@@ -17,7 +22,7 @@
 #define C_REJ0 0x54
 #define C_REJ1 0x55
 #define C_DISC 0x0B
-#define BCC(a,b) = a^b
+#define BCC(a,b) ((a) ^ (b))
 #define CI0 0x00
 #define CI1 0x80
 
@@ -50,7 +55,7 @@ int sendSupervisionFrame(int fd, unsigned char A, unsigned char C){
     frame[0] = FLAG;
     frame[1] = A;
     frame[2] = C;
-    frame[3] = A^C;
+    frame[3] = BCC(frame[1], frame[2]);
     frame[4] = FLAG;
 
     return writeBytesSerialPort(frame,5);
@@ -87,7 +92,7 @@ int llopen(LinkLayer connectionParameters)
                 state = START;
 
                 while(state != STOP && !alarmFLag){
-                    if (readBytesSerialPort(&byte,1) > 0){
+                    if (readByteSerialPort(&byte,1) > 0){
                         switch (state)
                         {
                             case START:
@@ -130,7 +135,7 @@ int llopen(LinkLayer connectionParameters)
         break;
         case LlRx:{
             while(state != STOP){
-                if (readBytesSerialPort(&byte,1) > 0){
+                if (readByteSerialPort(&byte,1) > 0){
                     switch (state)
                     {
                         case START:
@@ -274,7 +279,7 @@ int llread(unsigned char *packet)
     State state = START;
 
     while (state != STOP){
-        if (readBytesSerialPort(&byte,1) > 0){
+        if (readByteSerialPort(&byte,1) > 0){
             switch (state)
             {
                 case START:
@@ -293,11 +298,11 @@ int llread(unsigned char *packet)
                     else if (byte == FLAG) state = FLAG_RCV;
                     else state = START;
                     break;
-                case BCC1_OK:
+                case BCC1_OK: {
                     // Read data until FLAG is encountered
                     int index = 0;
                     while (TRUE) {
-                        if (readBytesSerialPort(&byte, 1) > 0) {
+                        if (readByteSerialPort(&byte, 1) > 0) {
                             if (byte == FLAG) {
                                 state = STOP;
                                 return index; // Return the size of the packet
@@ -307,12 +312,13 @@ int llread(unsigned char *packet)
                         }
                     }
                     break;
+                }
                 default:
                     break;
             }  
         }
     }
-
+    return -1;
 
 }
 

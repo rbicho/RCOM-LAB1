@@ -2,6 +2,8 @@
 
 #include "application_layer.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "link_layer.h"
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
@@ -11,11 +13,11 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     linkLayer.baudRate = baudRate;
     linkLayer.nRetransmissions = nTries;
     linkLayer.timeout = timeout;
-    linkLayer.role = strcmp(role, "LlTx") ? LlTx : LlRx;
+    linkLayer.role = (strcmp(role, "LlTx") == 0) ? LlTx : LlRx;
 
     if (llopen(linkLayer) < 0)
     {
-        printf("Error\n");
+        printf("Failed to open link layer.\n");
         return;
     }
 
@@ -34,4 +36,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         //Receiver
         llread(NULL);
     }
+    llclose(linkLayer);
+
 }

@@ -117,7 +117,7 @@ int closeSerialPort()
 // Must check whether a byte was actually received from the return value.
 // Save the received byte in the "byte" pointer.
 // Returns -1 on error, 0 if no byte was received, 1 if a byte was received.
-int readByteSerialPort(unsigned char *byte)
+int readByteSerialPort(unsigned char *byte, int nBytes)
 {
     return read(fd, byte, 1);
 }
