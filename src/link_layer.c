@@ -19,10 +19,6 @@
 #define A_RE 0x01
 #define C_SET 0x03
 #define C_UA 0x07
-#define C_RR0 0xAA
-#define C_RR1 0xAB
-#define C_REJ0 0x54
-#define C_REJ1 0x55
 #define C_DISC 0x0B
 #define BCC(a,b) ((a) ^ (b))
 #define CI0 0x00
@@ -50,6 +46,24 @@ typedef enum
 } State;
 
 State state = START;
+
+#define C_RR0 0xAA
+#define C_RR1 0xAB
+#define C_REJ0 0x54
+#define C_REJ1 0x55
+
+// Escaping
+#define ESC 0x7D
+#define ESC_7E 0x5E
+#define ESC_7D 0x5D
+
+// Helper to build control bytes
+static inline unsigned char rr_control(int next_expected_ns) {
+    return next_expected_ns ? C_RR1 : C_RR0;
+}
+static inline unsigned char rej_control(int expected_ns) {
+    return expected_ns ? C_REJ1 : C_REJ0;
+}
 
 //HELPER FUNCTIONS
 int sendSupervisionFrame(int fd, unsigned char A, unsigned char C){
@@ -317,7 +331,7 @@ int llread(unsigned char *packet)
                     else state = START;
                     break;
                 case DATA_READING:
-                    if (byte == ESC) state = DATA_FOUND_ESC;
+                    if (byte == ESC) state = DATA_ESC;
                     else if (byte == FLAG){
                         unsigned char bcc2 = packet[i-1];
                         i--;
@@ -345,9 +359,9 @@ int llread(unsigned char *packet)
                     break;
                 case DATA_ESC
                     state = DATA_READING;
-                    if (byte == ESC || byte == FLAG) packet[i++] = byte;
+                    if (byte == DATA_ESC || byte == FLAG) packet[i++] = byte;
                     else{
-                        packet[i++] = ESC;
+                        packet[i++] = DATA_ESC;
                         packet[i++] = byte;
                     }
                     break;
