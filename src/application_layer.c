@@ -134,7 +134,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                     break;
                 }
                 expectedSize = fileSizeFromPkt;
-                remoteName = strdup((char*)name);
+                remoteName = malloc(strlen((char*)name) + 1);
+                strcpy(remoteName, (char*)name);
                 receivedBytes = 0;
                 printf("RX: START filename='%s' size=%lu\n", name, fileSizeFromPkt);
                 free(name);
