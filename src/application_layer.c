@@ -126,20 +126,42 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                     fprintf(stderr, "applicationLayer: parseControlPacket START falhou\n");
                     continue;
                 }
-                if (out) { fclose(out); out = NULL; }
-                out = fopen((char*)name, "wb");
+
+
+                char outputName[512];
+                char *dot = strrchr((char*)name, '.');
+                if (dot != NULL && dot != (char*)name) {
+                    /* dot points into name; compute base length */
+                    size_t baseLen = (size_t)(dot - (char*)name);
+                    /* Ensure we don't overflow outputName */
+                    snprintf(outputName, sizeof(outputName), "%.*s-received%s",
+                            (int)baseLen, (char*)name, dot);
+                } else {
+                    /* No extension found — just append */
+                    snprintf(outputName, sizeof(outputName), "%s-received", (char*)name);
+                }
+
+                out = fopen(outputName, "wb");
                 if (!out) {
                     perror("applicationLayer: fopen (receber)");
                     free(name);
                     break;
                 }
+
                 expectedSize = fileSizeFromPkt;
-                remoteName = malloc(strlen((char*)name) + 1);
-                strcpy(remoteName, (char*)name);
+
+           
+                if (remoteName) { free(remoteName); remoteName = NULL; }
+                remoteName = strdup(outputName); 
+
                 receivedBytes = 0;
-                printf("RX: START filename='%s' size=%lu\n", name, fileSizeFromPkt);
+                printf("RX: START filename='%s' -> saving as '%s' size=%lu\n",
+                    name, outputName, fileSizeFromPkt);
+
                 free(name);
             }
+
+
             else if (C == C_DATA) {
                 if (!out) {
                     fprintf(stderr, "applicationLayer: recebido DATA mas START ainda não chegou -> ignora\n");

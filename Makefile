@@ -41,7 +41,7 @@ cable: $(CABLE)/cable.c
 
 .PHONY: run_cable
 run_cable: cable
-	@which -s socat || { echo "Error: Could not find socat. Install socat and try again."; exit 1; }
+@command -v socat >/dev/null 2>&1 || { echo "Error: Could not find socat. Install socat and try again."; exit 1; }
 	sudo ./$(BIN)/cable
 
 # Clean
