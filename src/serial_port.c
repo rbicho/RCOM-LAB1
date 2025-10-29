@@ -14,7 +14,7 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-int fd = -1;           // File descriptor for open serial port
+static int fd = -1;           // File descriptor for open serial port
 struct termios oldtio; // Serial port settings to restore on closing
 
 // Open and configure the serial port.
@@ -117,7 +117,7 @@ int closeSerialPort()
 // Must check whether a byte was actually received from the return value.
 // Save the received byte in the "byte" pointer.
 // Returns -1 on error, 0 if no byte was received, 1 if a byte was received.
-int readByteSerialPort(unsigned char *byte)
+int readByteSerialPort(int fd, unsigned char *byte)
 {
     return read(fd, byte, 1);
 }
@@ -125,7 +125,7 @@ int readByteSerialPort(unsigned char *byte)
 // Write up to numBytes from the "bytes" array to the serial port.
 // Must check how many were actually written in the return value.
 // Returns -1 on error, otherwise the number of bytes written.
-int writeBytesSerialPort(const unsigned char *bytes, int nBytes)
+int writeBytesSerialPort(int fd, const unsigned char *bytes, int nBytes)
 {
     return write(fd, bytes, nBytes);
 }
