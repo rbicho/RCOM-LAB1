@@ -229,7 +229,7 @@ unsigned char* parseControlPacket(const unsigned char* packet, int size, unsigne
 }
 
 
-unsigned char* getControlPacket(unsigned int c, const char* filename, unsigned long length, unsigned int* packetSize)
+unsigned char* createControlPacket(unsigned char controlField, const char* filename, unsigned long length, unsigned int* packetSize)
 {
     if (!filename || !packetSize) return NULL;
     unsigned long tmp = length;
@@ -246,7 +246,7 @@ unsigned char* getControlPacket(unsigned int c, const char* filename, unsigned l
     if (!packet) return NULL;
 
     int pos = 0;
-    packet[pos++] = (unsigned char)c;
+    packet[pos++] = (unsigned char)controlField;
 
     packet[pos++] = (unsigned char)T_FILESIZE;
     packet[pos++] = (unsigned char)L_len;
@@ -263,7 +263,7 @@ unsigned char* getControlPacket(unsigned int c, const char* filename, unsigned l
     return packet;
 }
 
-unsigned char* getDataPacket(unsigned char sequence, const unsigned char *data, int dataSize, int *packetSize)
+unsigned char* createDataPacket(unsigned char sequence, const unsigned char *data, int dataSize, int *packetSize)
 {
     if (!data || dataSize < 0 || dataSize > 65535 || !packetSize) return NULL;
 

@@ -3,9 +3,8 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-#include "main.c"
 #include "link_layer.h"
-#include "application_layer.c"
+#include "application_layer.h"
 #include "serial_port.h"
 #include <stdlib.h>
 #include <string.h>
@@ -26,8 +25,8 @@
 
 int alarmFlag = FALSE;
 int alarmCount = 0;
-//int timeout = 0;
-//int nRetransmissions = 0;
+int timeout = 0;
+int nRetransmissions = 0;
 
 
 typedef enum
@@ -193,7 +192,7 @@ int llopen(LinkLayer connectionParameters)
 
             (void) signal(SIGALRM, alarmHandler);
 
-            while(connectionParameters.nRetransmissions > 0 && state != STOP){
+            while(nRetransmissions > 0 && state != STOP){
 
                 sendSupervisionFrame(A_SE, C_SET);
                 alarm(timeout);
@@ -234,7 +233,7 @@ int llopen(LinkLayer connectionParameters)
                         }  
                     }
                 }
-                connectionParameters.nRetransmissions--;
+                nRetransmissions--;
             }
         }
         if (state != STOP){

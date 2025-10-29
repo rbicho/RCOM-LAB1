@@ -48,9 +48,9 @@ void alarmHandler(int signal);
 
 unsigned char readControlFrame(int fd);
 
-int BCC2(const unsigned char *data, int size);
+unsigned char BCC2(const unsigned char *data, int size);
 
-int sendSupervisionFrame(int fd, unsigned char addressField, unsigned char controlField);
+int sendSupervisionFrame(unsigned char addressField, unsigned char controlField);
 
 int byteStuffing(const unsigned char *input, int inputSize, unsigned char *output);
 
