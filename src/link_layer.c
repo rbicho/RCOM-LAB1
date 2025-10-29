@@ -24,11 +24,12 @@
 #define CI0 0x00
 #define CI1 0x80
 
+static int fd = -1;
 int alarmFlag = FALSE;
 int alarmCount = 0;
 int timeout = 0;
 int nRetransmissions = 0;
-static int fd = -1;
+
 
 
 typedef enum
@@ -89,8 +90,8 @@ unsigned char readControlFrameWithTimeout(int timeout_seconds) {
     State state = START;
     unsigned char b;
     (void) signal(SIGALRM, alarmHandler);
-    alarm(timeout_seconds);
     alarmFlag = FALSE;
+    alarm(timeout_seconds);
     unsigned char A = 0, C = 0;
 
     while (!alarmFlag) {
@@ -129,6 +130,7 @@ unsigned char readControlFrameWithTimeout(int timeout_seconds) {
 
 
 unsigned char BCC2(const unsigned char *data, int size){
+    if (size <= 0) return 0;
     unsigned char bcc2 = data[0];
     for (int i = 1; i < size; i++) {
         bcc2 ^= data[i];
@@ -218,9 +220,9 @@ int llopen(LinkLayer connectionParameters)
                 sendSupervisionFrame(fd, A_SE, C_SET);
                 printf("[DBG llopen TX] Sent SET frame on fd=%d\n", fd);
 fflush(stdout);
-
-                alarm(timeout);
                 alarmFlag = FALSE;
+                alarm(timeout);
+
 
                 while(state != STOP && !alarmFlag){
                     if (readByteSerialPort(fd, &byte) > 0){
@@ -251,6 +253,7 @@ fflush(stdout);
                                     state = STOP;
                                     alarm(0);
                                     alarmFlag = FALSE;
+                                    
                                     return fd;
                                 }
                                 else state = START;
@@ -298,6 +301,7 @@ fflush(stdout);
                         case BCC1_OK:
                             if (byte == FLAG){
                                 state = STOP;
+                                alarm(0);
                                 sendSupervisionFrame(fd, A_RE, C_UA); 
                                 return fd;
                             }
@@ -409,6 +413,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     free(frame);
 
     if (accepted) {
+        alarm(0);
         printf("[TX] Frame acknowledged successfully.\n");
         return totalSize;
     } else {
@@ -546,8 +551,8 @@ int llclose(){
     while (nRetransmissions != 0 && state != STOP){
 
         sendSupervisionFrame(fd, A_SE, C_DISC);
-        alarm(timeout);
         alarmFlag = FALSE;
+        alarm(timeout);
 
         while(state != STOP && !alarmFlag){
             if (readByteSerialPort(fd, &byte) > 0){
