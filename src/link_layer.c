@@ -191,49 +191,53 @@ int llopen(LinkLayer connectionParameters)
 {
     linkLayer = connectionParameters;
     printf("[DBG llopen] enter llopen, role=%d, serialPort='%s', baud=%d, timeout=%d, nRetrans=%d\n",
+           connectionParameters.role,
+           connectionParameters.serialPort,
+           connectionParameters.baudRate,
+           connectionParameters.timeout,
+           connectionParameters.nRetransmissions);
+    fflush(stdout);
 
-       connectionParameters.role,
-       connectionParameters.serialPort,
-       connectionParameters.baudRate,
-       connectionParameters.timeout,
-       connectionParameters.nRetransmissions);
-    fflush(stdout);
-     fd = openSerialPort(connectionParameters.serialPort,connectionParameters.baudRate);
+    fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
     if (fd < 0) {
-    printf("[DBG llopen] openSerialPort FAILED, fd=%d\n", fd);
-    fflush(stdout);
-    return -1;
+        printf("[DBG llopen] openSerialPort FAILED, fd=%d\n", fd);
+        fflush(stdout);
+        return -1;
     }
+
     printf("[DBG llopen] serial opened fd=%d\n", fd);
     fflush(stdout);
-    State state = START;
 
+    State state = START;
     unsigned char byte;
-     timeout = connectionParameters.timeout;
-     nRetransmissions = connectionParameters.nRetransmissions;
+    timeout = connectionParameters.timeout;
+    nRetransmissions = connectionParameters.nRetransmissions;
 
     switch (connectionParameters.role)
     {
-        case LlTx:{
+        // -------------------------------
+        // TRANSMITTER
+        // -------------------------------
+        case LlTx: {
 
-            (void) signal(SIGALRM, alarmHandler);
+            int attempts = 0;
 
-            while(nRetransmissions > 0 && state != STOP){
-
+            while (attempts < nRetransmissions && state != STOP) {
                 sendSupervisionFrame(fd, A_SE, C_SET);
-                printf("[DBG llopen TX] Sent SET frame on fd=%d\n", fd);
-fflush(stdout);
+                printf("[DBG llopen TX] Sent SET frame (attempt %d/%d)\n",
+                       attempts + 1, nRetransmissions);
+                fflush(stdout);
+
                 alarmFlag = FALSE;
+                (void) signal(SIGALRM, alarmHandler); 
                 alarm(timeout);
 
-
-                while(state != STOP && !alarmFlag){
-                    if (readByteSerialPort(fd, &byte) > 0){
+                while (state != STOP && !alarmFlag) {
+                    if (readByteSerialPort(fd, &byte) > 0) {
                         printf("[DBG llopen] read returned=%d byte=0x%02X\n", 1, byte);
- fflush(stdout);
+                        fflush(stdout);
 
-                        switch (state)
-                        {
+                        switch (state) {
                             case START:
                                 if (byte == FLAG) state = FLAG_RCV;
                                 break;
@@ -252,38 +256,45 @@ fflush(stdout);
                                 else state = START;
                                 break;
                             case BCC1_OK:
-                                if (byte == FLAG){
+                                if (byte == FLAG) {
                                     state = STOP;
+                                    (void) signal(SIGALRM, alarmHandler); 
                                     alarm(0);
                                     alarmFlag = FALSE;
-                                    
+                                    printf("[DBG llopen TX] Received UA -> Connection established\n");
                                     return fd;
-                                }
-                                else state = START;
+                                } else state = START;
                                 break;
                             default:
                                 break;
-                        }  
+                        }
                     }
                 }
-                nRetransmissions--;
+
+                if (state != STOP) {
+                    if (alarmFlag)
+                        printf("[DBG llopen TX] Timeout waiting for UA, retrying...\n");
+                    attempts++;
+                }
             }
-        }
-        if (state != STOP){
+
+            printf("[DBG llopen TX] Connection setup failed after %d attempts.\n", attempts);
             return -1;
         }
-        break;
-        case LlRx:{
+
+        // -------------------------------
+        // RECEIVER
+        // -------------------------------
+        case LlRx: {
             printf("[DBG llopen RX] waiting for SET on fd=%d\n", fd);
-fflush(stdout);
+            fflush(stdout);
 
-            while(state != STOP){
-                if (readByteSerialPort(fd, &byte) > 0){
+            while (state != STOP) {
+                if (readByteSerialPort(fd, &byte) > 0) {
                     printf("[DBG llopen] read returned=%d byte=0x%02X\n", 1, byte);
- fflush(stdout);
+                    fflush(stdout);
 
-                    switch (state)
-                    {
+                    switch (state) {
                         case START:
                             if (byte == FLAG) state = FLAG_RCV;
                             break;
@@ -302,31 +313,33 @@ fflush(stdout);
                             else state = START;
                             break;
                         case BCC1_OK:
-                            if (byte == FLAG){
+                            if (byte == FLAG) {
                                 state = STOP;
+                                (void) signal(SIGALRM, alarmHandler); 
                                 alarm(0);
-                                sendSupervisionFrame(fd, A_RE, C_UA); 
+                                printf("[DBG llopen RX] Received SET -> sending UA\n");
+                                sendSupervisionFrame(fd, A_RE, C_UA);
                                 return fd;
-                            }
-                            else state = START;
+                            } else state = START;
                             break;
                         default:
                             break;
-                    }  
+                    }
                 }
             }
-            
+
             break;
+        }
+
+        default:
+            printf("[DBG llopen] exiting llopen with fd=%d (invalid role)\n", fd);
+            fflush(stdout);
+            return -1;
     }
-    default:
+
     printf("[DBG llopen] exiting llopen with fd=%d (stop state=%d)\n", fd, state);
-fflush(stdout);
-
-        return -1;
-        break;
-
- }
- return fd;
+    fflush(stdout);
+    return fd;
 }
 
 ////////////////////////////////////////////////
@@ -608,7 +621,11 @@ int llclose() {
     else if (linkLayer.role == LlRx) {
         printf("[DBG llclose RX] Waiting for DISC from transmitter.\n");
 
-        while (state != STOP) {
+        alarmFlag = FALSE;
+        (void) signal(SIGALRM, alarmHandler);
+        alarm(timeout);  // Set timeout for DISC reception
+
+        while (state != STOP && !alarmFlag) {
             if (readByteSerialPort(fd, &byte) > 0) {
                 switch (state) {
                     case START:
@@ -631,12 +648,19 @@ int llclose() {
                     case BCC1_OK:
                         if (byte == FLAG) {
                             state = STOP;
+                            alarm(0);
                             printf("[DBG llclose RX] Received DISC from TX.\n");
                         } else state = START;
                         break;
                     default: break;
                 }
             }
+        }
+
+        if (alarmFlag) {
+            printf("[DBG llclose RX] Timeout waiting for DISC → closing anyway.\n");
+            closeSerialPort();
+            return -1;
         }
 
         // Send DISC reply to TX
@@ -646,6 +670,7 @@ int llclose() {
         // Wait for UA
         state = START;
         alarmFlag = FALSE;
+        (void) signal(SIGALRM, alarmHandler); 
         alarm(timeout);
 
         while (state != STOP && !alarmFlag) {
@@ -671,6 +696,7 @@ int llclose() {
                     case BCC1_OK:
                         if (byte == FLAG) {
                             state = STOP;
+                            (void) signal(SIGALRM, alarmHandler); 
                             alarm(0);
                             printf("[DBG llclose RX] Received UA, closing serial port.\n");
                             closeSerialPort();
@@ -681,6 +707,7 @@ int llclose() {
                 }
             }
         }
+        (void) signal(SIGALRM, alarmHandler); 
 
         alarm(0);
         printf("[DBG llclose RX] Timeout waiting for UA, closing anyway.\n");
