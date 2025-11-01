@@ -1,10 +1,11 @@
 // Application layer protocol implementation
 
 #include "application_layer.h"
+#include "link_layer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "link_layer.h"
+
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
@@ -39,7 +40,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         unsigned int ctrlSize = 0;
         unsigned char* startPacket = createControlPacket(C_START, filename, fileLen, &ctrlSize);
         if(llwrite(startPacket, ctrlSize) == -1){
-            fprintf(stderr, "applicationLayer: llwrite START falhou\n");
+            fprintf(stderr, "applicationLayer: llwrite START failed\n");
             free(startPacket);
             fclose(file);
             llclose();
@@ -57,12 +58,12 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             int pktSize = 0;
             unsigned char *dataPkt = createDataPacket(seq, buffer, (int)r, &pktSize);
             if (!dataPkt) {
-                fprintf(stderr, "applicationLayer: createDataPacket falhou\n");
+                fprintf(stderr, "applicationLayer: createDataPacket failed\n");
                 break;
             }
 
             if (llwrite(dataPkt, pktSize) < 0) {
-                fprintf(stderr, "applicationLayer: llwrite (data) falhou\n");
+                fprintf(stderr, "applicationLayer: llwrite (data) failed\n");
                 free(dataPkt);
                 break;
             }
@@ -74,7 +75,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         }
 
         if (ferror(file)) {
-            fprintf(stderr, "applicationLayer: erro durante leitura do ficheiro\n");
+            fprintf(stderr, "applicationLayer: failed while reading file\n");
             fclose(file);
             llclose();
             return;
@@ -84,19 +85,19 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
         unsigned char *endPkt = createControlPacket(C_END, filename, (unsigned long)fileLen, &ctrlSize);
         if (!endPkt) {
-            fprintf(stderr, "applicationLayer: createControlPacket END falhou\n");
+            fprintf(stderr, "applicationLayer: createControlPacket END failed\n");
             llclose();
             return;
         }
         if (llwrite(endPkt, (int)ctrlSize) < 0) {
-            fprintf(stderr, "applicationLayer: llwrite END falhou\n");
+            fprintf(stderr, "applicationLayer: llwrite END failed\n");
             free(endPkt);
             llclose();
             return;
         }
         free(endPkt);
 
-        printf("TX: enviado %ld bytes em %d pacotes\n", totalSent, packetsSent);
+        printf("TX: sent %ld bytes in %d packets\n", totalSent, packetsSent);
 
     }
     else {
@@ -110,7 +111,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         while (1) {
             rxLen = llread(rxPacket);
             if (rxLen < 0) {
-                fprintf(stderr, "applicationLayer: llread devolveu erro\n");
+                fprintf(stderr, "applicationLayer: llread error\n");
                 break;
             }
             if (rxLen == 0) {
@@ -123,7 +124,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 unsigned long fileSizeFromPkt = 0;
                 unsigned char *name = parseControlPacket(rxPacket, rxLen, &fileSizeFromPkt);
                 if (!name) {
-                    fprintf(stderr, "applicationLayer: parseControlPacket START falhou\n");
+                    fprintf(stderr, "applicationLayer: parseControlPacket START failed\n");
                     continue;
                 }
 
@@ -131,19 +132,16 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 char outputName[512];
                 char *dot = strrchr((char*)name, '.');
                 if (dot != NULL && dot != (char*)name) {
-                    /* dot points into name; compute base length */
                     size_t baseLen = (size_t)(dot - (char*)name);
-                    /* Ensure we don't overflow outputName */
                     snprintf(outputName, sizeof(outputName), "%.*s-received%s",
                             (int)baseLen, (char*)name, dot);
                 } else {
-                    /* No extension found — just append */
                     snprintf(outputName, sizeof(outputName), "%s-received", (char*)name);
                 }
 
                 out = fopen(outputName, "wb");
                 if (!out) {
-                    perror("applicationLayer: fopen (receber)");
+                    perror("applicationLayer: fopen (receive)");
                     free(name);
                     break;
                 }
@@ -164,18 +162,18 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
             else if (C == C_DATA) {
                 if (!out) {
-                    fprintf(stderr, "applicationLayer: recebido DATA mas START ainda não chegou -> ignora\n");
+                    fprintf(stderr, "applicationLayer: received DATA but START not found yet -> ignore\n");
                     continue;
                 }
                 unsigned char payload[MAX_PAYLOAD_SIZE];
                 int payloadLen = parseDataPacket(rxPacket, (unsigned int)rxLen, payload);
                 if (payloadLen < 0) {
-                    fprintf(stderr, "applicationLayer: parseDataPacket falhou\n");
+                    fprintf(stderr, "applicationLayer: parseDataPacket failed\n");
                     continue;
                 }
                 size_t w = fwrite(payload, 1, (size_t)payloadLen, out);
                 if (w != (size_t)payloadLen) {
-                    perror("applicationLayer: fwrite falhou");
+                    perror("applicationLayer: fwrite failed");
                     fclose(out);
                     out = NULL;
                     break;
@@ -189,17 +187,17 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                     printf("RX: END filename='%s' size=%lu\n", name, fileSizeFromPkt);
                     free(name);
                 } else {
-                    printf("RX: END (sem nome no TLV)\n");
+                    printf("RX: END (no name TLV)\n");
                 }
                 if (out) {
                     fclose(out);
                     out = NULL;
                 }
-                printf("RX: recepção concluída, recebidos %ld bytes (esperados %lu)\n", receivedBytes, expectedSize);
+                printf("RX: reception concluded, received %ld bytes (expected %lu)\n", receivedBytes, expectedSize);
                 break;
             }
             else {
-                fprintf(stderr, "applicationLayer: C desconhecido: %u\n", (unsigned int)C);
+                fprintf(stderr, "applicationLayer: C unknown: %u\n", (unsigned int)C);
             }
         }
         if (out) fclose(out);
@@ -207,7 +205,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     if (llclose() < 0) {
-        fprintf(stderr, "applicationLayer: llclose devolveu erro\n");
+        fprintf(stderr, "applicationLayer: llclose returned error\n");
     }
 }
 
