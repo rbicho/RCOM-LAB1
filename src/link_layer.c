@@ -91,7 +91,6 @@ unsigned char readControlFrameWithTimeout(void) {
     State state = START;
     unsigned char b, A = 0, C = 0;
 
-    // Do NOT start or stop alarms here — the caller handles them.
     while (!alarmFlag) {
         if (readByteSerialPort(fd, &b) > 0) {
             switch (state) {
@@ -114,7 +113,6 @@ unsigned char readControlFrameWithTimeout(void) {
                     break;
                 case BCC1_OK:
                     if (b == FLAG) {
-                        // Got a valid supervision frame
                         return C;
                     } else {
                         state = START;
@@ -126,7 +124,6 @@ unsigned char readControlFrameWithTimeout(void) {
         }
     }
 
-    // If we got here, timeout triggered (alarmFlag == TRUE)
     return 0;
 }
 
@@ -158,7 +155,7 @@ int byteStuffing(const unsigned char *input, int inputSize, unsigned char *outpu
             output[j++] = input[i];
         }
     }
-    return j; // Return the size of the stuffed output
+    return j; 
 }
 
 int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *output){
@@ -172,14 +169,14 @@ int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *out
                 } else if (input[i] == ESC_7D) {
                     output[j++] = ESC;
                 } else {
-                    // Invalid escape sequence, handle error as needed
+                    return -1;
                 }
             }
         } else {
             output[j++] = input[i];
         }
     }
-    return j; // Return the size of the destuffed output
+    return j; 
 }
 
 
@@ -215,9 +212,9 @@ int llopen(LinkLayer connectionParameters)
 
     switch (connectionParameters.role)
     {
-        // -------------------------------
+      
         // TRANSMITTER
-        // -------------------------------
+       
         case LlTx: {
 
             int attempts = 0;
@@ -345,25 +342,24 @@ int llopen(LinkLayer connectionParameters)
 
 
 ////////////////////////////////////////////////
-// LLWRITE (Improved)
+// LLWRITE 
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    static int Ns = 0;  // sequence number 0 or 1
+    static int Ns = 0;  
 
-    // Compute BCC2
+  
     unsigned char bcc2 = BCC2(buf, bufSize);
     unsigned char *payload = malloc(bufSize + 1);
     if (!payload) { perror("malloc"); return -1; }
     memcpy(payload, buf, bufSize);
     payload[bufSize] = bcc2;
 
-    // Byte stuffing
+
     unsigned char stuffedPayload[(bufSize + 1) * 2];
     int stuffedSize = byteStuffing(payload, bufSize + 1, stuffedPayload);
     free(payload);
 
-    // Build full frame: FLAG A C BCC1 DATA FLAG
     unsigned char *frame = malloc(stuffedSize + 5);
     if (!frame) { perror("malloc"); return -1; }
 
@@ -371,7 +367,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     frame[pos++] = FLAG;
     frame[pos++] = A_SE;
     frame[pos++] = (Ns == 0) ? CI0 : CI1;
-    frame[pos++] = frame[1] ^ frame[2]; // BCC1
+    frame[pos++] = frame[1] ^ frame[2]; 
     memcpy(frame + pos, stuffedPayload, stuffedSize);
     pos += stuffedSize;
     frame[pos++] = FLAG;
@@ -383,18 +379,18 @@ int llwrite(const unsigned char *buf, int bufSize)
     while (attempts < nRetransmissions && !acknowledged) {
         alarmFlag = FALSE;
 
-        // Send frame
+        
         writeBytesSerialPort(fd, frame, totalSize);
         printf("[TX] Sent I(%d), attempt %d/%d\n", Ns, attempts + 1, nRetransmissions);
         fflush(stdout);
 
-        // Start timer
+        
         (void) signal(SIGALRM, alarmHandler);
         alarm(timeout);
 
         while (!alarmFlag && !acknowledged) {
             unsigned char response = readControlFrameWithTimeout();
-            if (response == 0) continue; // timeout still ticking
+            if (response == 0) continue; 
 
             if (response == rr_control((Ns + 1) % 2)) {
                 printf("[TX] Received RR(%d) → ACK for I(%d)\n", (Ns + 1) % 2, Ns);
@@ -404,7 +400,7 @@ int llwrite(const unsigned char *buf, int bufSize)
             }
             else if (response == rej_control(Ns)) {
                 printf("[TX] Received REJ(%d) → retransmit I(%d)\n", Ns, Ns);
-                break; // retry immediately
+                break; 
             }
             else if (response == C_DISC) {
                 printf("[TX] Received DISC during transmission — closing link.\n");
@@ -418,13 +414,12 @@ int llwrite(const unsigned char *buf, int bufSize)
             }
         }
 
-        alarm(0); // stop timer
+        alarm(0); 
 
         if (!acknowledged) {
             attempts++;
             printf("[TX] Retry %d/%d\n", attempts, nRetransmissions);
-            sleep(1); // 1 second delay
-
+            sleep(1); // 1 second delay beetween attempts
         }
     }
 
@@ -435,7 +430,6 @@ int llwrite(const unsigned char *buf, int bufSize)
         return totalSize;
     } else {
         printf("[TX] Transmission failed after %d attempts.\n", attempts);
-        llclose();
         return -1;
     }
 }
@@ -446,7 +440,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
 
 ////////////////////////////////////////////////
-// LLREAD (fixed: non-fatal BCC2 error)
+// LLREAD 
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
@@ -475,7 +469,7 @@ int llread(unsigned char *packet)
                         state = C_RCV;
                     } else if (byte == C_DISC) {
                         sendSupervisionFrame(fd, A_RE, C_DISC);
-                        return 0; // graceful exit (DISC)
+                        return 0; 
                     } else if (byte == FLAG)
                         state = FLAG_RCV;
                     else
@@ -493,19 +487,19 @@ int llread(unsigned char *packet)
 
                 case DATA_READING:
                     if (byte == FLAG) {
-                        // destuff payload
+                       
                         unsigned char *destuffed = malloc(i);
                         if (!destuffed) {
                             perror("malloc failed");
                             sendSupervisionFrame(fd, A_RE, rej_control(expectedNs));
-                            return -1; // memory error → fatal
+                            return -1; 
                         }
 
                         int destuffedLen = byteDestuffing(packet, i, destuffed);
                         if (destuffedLen < 1) {
                             free(destuffed);
                             sendSupervisionFrame(fd, A_RE, rej_control(expectedNs));
-                            return 0; // non-fatal, ignore corrupted frame
+                            return 0;
                         }
 
                         unsigned char receivedBCC2 = destuffed[destuffedLen - 1];
@@ -518,17 +512,18 @@ int llread(unsigned char *packet)
                                 expectedNs = (expectedNs + 1) % 2;
                                 memcpy(packet, destuffed, destuffedLen - 1);
                                 free(destuffed);
-                                return destuffedLen - 1; // success
+                                return destuffedLen - 1; 
                             } else {
                                 sendSupervisionFrame(fd, A_RE, rr_control(expectedNs));
                                 free(destuffed);
+                                printf("[RX] Duplicate I(%d) received → RR(%d)\n", receivedNs, expectedNs);
                                 return 0; // duplicate frame, ignore
                             }
                         } else {
                             printf("[RX] BCC2 error → REJ(%d)\n", expectedNs);
                             sendSupervisionFrame(fd, A_RE, rej_control(expectedNs));
                             free(destuffed);
-                            return 0; // ❗ non-fatal, expect retransmission
+                            return 0; 
                         }
                     } else {
                         packet[i++] = byte;
@@ -541,7 +536,7 @@ int llread(unsigned char *packet)
         }
     }
 
-    return -1; // fallback (shouldn’t happen)
+    return -1; 
 }
 
  
@@ -550,9 +545,15 @@ int llread(unsigned char *packet)
 
 
 ////////////////////////////////////////////////
-// LLCLOSE (Improved)
+// LLCLOSE 
 ////////////////////////////////////////////////
 int llclose() {
+
+    if (fd < 0) {
+    printf("[DBG llclose] Already closed (invalid fd)\n");
+    return 0;
+    }
+
     State state = START;
     unsigned char byte;
     int attempts = nRetransmissions; 
@@ -561,9 +562,9 @@ int llclose() {
     printf("[DBG llclose] Starting link layer close sequence. Role = %s\n",
            (linkLayer.role == LlTx) ? "Transmitter" : "Receiver");
 
-    // -------------------------------
-    // TRANSMITTER SIDE (LlTx)
-    // -------------------------------
+
+    // TRANSMITTER 
+
     if (linkLayer.role == LlTx) {
         printf("[DBG llclose TX] Sending DISC to initiate disconnection.\n");
 
@@ -603,6 +604,7 @@ int llclose() {
                                 printf("[DBG llclose] Closing serial port fd=%d\n", fd);
                                 fflush(stdout);
                                 closeSerialPort();
+                                fd = -1;
                                 return 0;
                             } else state = START;
                             break;
@@ -621,12 +623,13 @@ int llclose() {
         printf("[DBG llclose TX] Connection close timed out.\n");
         alarm(0);
         closeSerialPort();
+        fd = -1;
         return -1;
     }
 
-    // -------------------------------
-    // RECEIVER SIDE (LlRx)
-    // -------------------------------
+
+    // RECEIVER SIDE 
+
     else if (linkLayer.role == LlRx) {
         printf("[DBG llclose RX] Waiting for DISC from transmitter.\n");
 
@@ -672,14 +675,14 @@ int llclose() {
             printf("[DBG llclose] Closing serial port fd=%d\n", fd);
             fflush(stdout);
             closeSerialPort();
+            fd = -1;
             return -1;
         }
 
-        // Send DISC reply
+
         sendSupervisionFrame(fd, A_RE, C_DISC);
         printf("[DBG llclose RX] Sent DISC reply to TX.\n");
 
-        // Wait for UA
         state = START;
         alarmFlag = FALSE;
         (void) signal(SIGALRM, alarmHandler);
@@ -713,6 +716,7 @@ int llclose() {
                             printf("[DBG llclose] Closing serial port fd=%d\n", fd);
                             fflush(stdout);
                             closeSerialPort();
+                            fd = -1;
                             return 0;
                         } else state = START;
                         break;
@@ -725,15 +729,13 @@ int llclose() {
         printf("[DBG llclose] Closing serial port fd=%d\n", fd);
         fflush(stdout);
         closeSerialPort();
+        fd = -1;
         return -1;
     }
 
-    // -------------------------------
-    // Invalid role
-    // -------------------------------
     else {
-        fprintf(stderr, "[ERR llclose] Unknown role, cannot close.\n");
         closeSerialPort();
+        fd = -1;
         return -1;
     }
 }

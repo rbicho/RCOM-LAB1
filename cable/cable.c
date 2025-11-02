@@ -32,6 +32,10 @@
 
 #define BUF_SIZE 2048
 
+int disable_tx_to_rx = 0;
+int disable_rx_to_tx = 0;
+
+
 // Current running parameters
 struct Parameters {
     int cableOn;
@@ -383,10 +387,11 @@ int main(int argc, char *argv[])
                 // Add error, if applicable
                 if (par.byteER != 0.0 && (double) rand() / (double) RAND_MAX < par.byteER)
                 {
-                    // At most one wrong bit per byte, good enough if ber < 0.02
                     par.tx2rx[par.tx2rxIdx] ^= (char) 1 << rand() % 8;
                 }
-                write(fdRx, par.tx2rx + par.tx2rxIdx, 1);
+                
+                if (!disable_tx_to_rx)
+                    write(fdRx, par.tx2rx + par.tx2rxIdx, 1);
             }
 
             if (par.rx2txValid[par.rx2txIdx])
@@ -394,10 +399,11 @@ int main(int argc, char *argv[])
                 // Add error, if applicable
                 if (par.byteER != 0.0 && (double) rand() / (double) RAND_MAX < par.byteER)
                 {
-                    // At most one wrong bit per byte, good enough if ber < 0.02
                     par.rx2tx[par.rx2txIdx] ^= (char) 1 << rand() % 8;
                 }
-                write(fdTx, par.rx2tx + par.rx2txIdx, 1);
+                
+                if (!disable_rx_to_tx)
+                    write(fdTx, par.rx2tx + par.rx2txIdx, 1);
             }
         }
 
@@ -529,6 +535,27 @@ int main(int argc, char *argv[])
             else if (strcmp(rxStdin, "help") == 0) {
                 help();
             }
+            else if (strcmp(rxStdin, "block_rx2tx") == 0)
+            {
+                disable_rx_to_tx = 1;
+                printf(">> Disabled Rx -> Tx direction (RR/REJ lost)\n");
+            }
+            else if (strcmp(rxStdin, "unblock_rx2tx") == 0)
+            {
+                disable_rx_to_tx = 0;
+                printf(">> Re-enabled Rx -> Tx direction\n");
+            }
+            else if (strcmp(rxStdin, "block_tx2rx") == 0)
+            {
+                disable_tx_to_rx = 1;
+                printf(">> Disabled Tx -> Rx direction\n");
+            }
+            else if (strcmp(rxStdin, "unblock_tx2rx") == 0)
+            {
+                disable_tx_to_rx = 0;
+                printf(">> Re-enabled Tx -> Rx direction\n");
+            }
+
             else {
                 printf("BAD COMMAND OR MISSING PARAMETERS\n");
             }
