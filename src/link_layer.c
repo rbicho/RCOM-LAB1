@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <time.h>
 
 
 
@@ -41,14 +42,29 @@ typedef enum
     C_RCV,
     BCC1_OK,
     STOP,
-    //DATA_ESC,
     DATA_READING,
     DISC,
     BCC2_OK,
 
 } State;
 
+// Statistics structure
+typedef struct {
+    int framesSent;
+    int framesReceived;
+    int framesRejected;
+    int framesAccepted;
+    double transmissionTime; 
+    double receptionTime;   
 
+} ConnectionS;
+
+// global statistics instance
+ConnectionS statistics = {0, 0, 0, 0, 0.0, 0.0};
+
+
+
+// Control field values for RR and REJ frames
 #define C_RR0 0xAA
 #define C_RR1 0xAB
 #define C_REJ0 0x54
@@ -59,7 +75,9 @@ typedef enum
 #define ESC_7E 0x5E
 #define ESC_7D 0x5D
 
-// Helper to build control bytes
+
+//HELPER FUNCTIONS
+
 unsigned char rr_control(int next_expected_ns) {
     return next_expected_ns ? C_RR1 : C_RR0;
 }
@@ -67,9 +85,9 @@ unsigned char rej_control(int expected_ns) {
     return expected_ns ? C_REJ1 : C_REJ0;
 }
 
-//HELPER FUNCTIONS
 
 int sendSupervisionFrame(int fd, unsigned char A, unsigned char C){
+    
 
     unsigned char frame[5];
     frame[0] = FLAG;
@@ -79,14 +97,15 @@ int sendSupervisionFrame(int fd, unsigned char A, unsigned char C){
     frame[4] = FLAG;
 
     int res = writeBytesSerialPort(fd, frame, 5);
-    printf("[DBG sendSupervisionFrame] Wrote %d bytes: %02X %02X %02X %02X %02X\n",
+    printf("[sendSupervisionFrame] Wrote %d bytes: %02X %02X %02X %02X %02X\n",
            res, frame[0], frame[1], frame[2], frame[3], frame[4]);
     fflush(stdout);
+
+    statistics.framesSent++;
 
     return res;
 }
 
-// returns control byte C if a valid supervision frame is received (with proper A and BCC1), or 0 on timeout/error
 unsigned char readControlFrameWithTimeout(void) {
     State state = START;
     unsigned char b, A = 0, C = 0;
@@ -139,7 +158,7 @@ unsigned char BCC2(const unsigned char *data, int size){
 void alarmHandler(int signal){
     alarmFlag = TRUE;
     alarmCount++;
-    printf("[DBG alarmHandler] alarm fired\n"); fflush(stdout);
+    printf("[alarmHandler] alarm fired\n"); fflush(stdout);
 }
 
 int byteStuffing(const unsigned char *input, int inputSize, unsigned char *output){
@@ -180,14 +199,28 @@ int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *out
 }
 
 
+void showStatistics() {
+    printf("------- Connection Statistics -------\n");
+    printf("Frames sent: %d\n", statistics.framesSent);
+    printf("Frames received: %d\n", statistics.framesReceived);
+    printf("Frames rejected: %d\n", statistics.framesRejected);
+    printf("Frames accepted: %d\n", statistics.framesAccepted);
+    printf("Transmission time: %.2f ms\n", statistics.transmissionTime);
+    printf("Reception time: %.2f ms\n", statistics.receptionTime);
+    printf("---------------------------------------\n");
+}
+
+
+
 
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
+    clock_t startTime = clock();
     linkLayer = connectionParameters;
-    printf("[DBG llopen] enter llopen, role=%d, serialPort='%s', baud=%d, timeout=%d, nRetrans=%d\n",
+    printf("[llopen] enter llopen, role=%d, serialPort='%s', baud=%d, timeout=%d, nRetrans=%d\n",
            connectionParameters.role,
            connectionParameters.serialPort,
            connectionParameters.baudRate,
@@ -197,12 +230,12 @@ int llopen(LinkLayer connectionParameters)
 
     fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
     if (fd < 0) {
-        printf("[DBG llopen] openSerialPort FAILED, fd=%d\n", fd);
+        printf("[llopen] openSerialPort FAILED, fd=%d\n", fd);
         fflush(stdout);
         return -1;
     }
 
-    printf("[DBG llopen] serial opened fd=%d\n", fd);
+    printf("[llopen] serial opened fd=%d\n", fd);
     fflush(stdout);
 
     State state = START;
@@ -221,7 +254,7 @@ int llopen(LinkLayer connectionParameters)
 
             while (attempts < nRetransmissions && state != STOP) {
                 sendSupervisionFrame(fd, A_SE, C_SET);
-                printf("[DBG llopen TX] Sent SET frame (attempt %d/%d)\n",
+                printf("[llopen TX] Sent SET frame (attempt %d/%d)\n",
                        attempts + 1, nRetransmissions);
                 fflush(stdout);
 
@@ -231,7 +264,8 @@ int llopen(LinkLayer connectionParameters)
 
                 while (state != STOP && !alarmFlag) {
                     if (readByteSerialPort(fd, &byte) > 0) {
-                        printf("[DBG llopen] read returned=%d byte=0x%02X\n", 1, byte);
+                        statistics.framesReceived++;
+                        printf("[llopen] read returned=%d byte=0x%02X\n", 1, byte);
                         fflush(stdout);
 
                         switch (state) {
@@ -258,7 +292,8 @@ int llopen(LinkLayer connectionParameters)
                                     (void) signal(SIGALRM, alarmHandler); 
                                     alarm(0);
                                     alarmFlag = FALSE;
-                                    printf("[DBG llopen TX] Received UA -> Connection established\n");
+                                    printf("[llopen TX] Received UA -> Connection established\n");
+                                    statistics.transmissionTime += ((double)(clock() - startTime) / CLOCKS_PER_SEC) * 1000;
                                     return fd;
                                 } else state = START;
                                 break;
@@ -270,12 +305,12 @@ int llopen(LinkLayer connectionParameters)
 
                 if (state != STOP) {
                     if (alarmFlag)
-                        printf("[DBG llopen TX] Timeout waiting for UA, retrying...\n");
+                        printf("[llopen TX] Timeout waiting for UA, retrying...\n");
                     attempts++;
                 }
             }
 
-            printf("[DBG llopen TX] Connection setup failed after %d attempts.\n", attempts);
+            printf("[llopen TX] Connection setup failed after %d attempts.\n", attempts);
             return -1;
         }
 
@@ -283,12 +318,13 @@ int llopen(LinkLayer connectionParameters)
         // RECEIVER
         // -------------------------------
         case LlRx: {
-            printf("[DBG llopen RX] waiting for SET on fd=%d\n", fd);
+            printf("[llopen RX] waiting for SET on fd=%d\n", fd);
             fflush(stdout);
 
             while (state != STOP) {
                 if (readByteSerialPort(fd, &byte) > 0) {
-                    printf("[DBG llopen] read returned=%d byte=0x%02X\n", 1, byte);
+                    statistics.framesReceived++;
+                    printf("[llopen] read returned=%d byte=0x%02X\n", 1, byte);
                     fflush(stdout);
 
                     switch (state) {
@@ -314,8 +350,9 @@ int llopen(LinkLayer connectionParameters)
                                 state = STOP;
                                 (void) signal(SIGALRM, alarmHandler); 
                                 alarm(0);
-                                printf("[DBG llopen RX] Received SET -> sending UA\n");
-                                sendSupervisionFrame(fd, A_RE, C_UA);
+                                printf("[llopen RX] Received SET -> sending UA\n");
+                                sendSupervisionFrame(fd, A_RE, C_UA);        
+                                statistics.receptionTime +=((double)(clock() - startTime) / CLOCKS_PER_SEC) * 1000;
                                 return fd;
                             } else state = START;
                             break;
@@ -329,12 +366,12 @@ int llopen(LinkLayer connectionParameters)
         }
 
         default:
-            printf("[DBG llopen] exiting llopen with fd=%d (invalid role)\n", fd);
+            printf("[llopen] exiting llopen with fd=%d (invalid role)\n", fd);
             fflush(stdout);
             return -1;
     }
 
-    printf("[DBG llopen] exiting llopen with fd=%d (stop state=%d)\n", fd, state);
+    printf("[llopen] exiting llopen with fd=%d (stop state=%d)\n", fd, state);
     fflush(stdout);
     return fd;
 }
@@ -346,9 +383,9 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    static int Ns = 0;  
+    clock_t startTime = clock();
 
-  
+    static int Ns = 0;  
     unsigned char bcc2 = BCC2(buf, bufSize);
     unsigned char *payload = malloc(bufSize + 1);
     if (!payload) { perror("malloc"); return -1; }
@@ -378,9 +415,11 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (attempts < nRetransmissions && !acknowledged) {
         alarmFlag = FALSE;
+        statistics.framesAccepted++;
 
         
         writeBytesSerialPort(fd, frame, totalSize);
+        statistics.framesSent++;
         printf("[TX] Sent I(%d), attempt %d/%d\n", Ns, attempts + 1, nRetransmissions);
         fflush(stdout);
 
@@ -395,11 +434,13 @@ int llwrite(const unsigned char *buf, int bufSize)
             if (response == rr_control((Ns + 1) % 2)) {
                 printf("[TX] Received RR(%d) → ACK for I(%d)\n", (Ns + 1) % 2, Ns);
                 Ns = (Ns + 1) % 2;
+                statistics.framesAccepted++;
                 acknowledged = 1;
                 break;
             }
             else if (response == rej_control(Ns)) {
                 printf("[TX] Received REJ(%d) → retransmit I(%d)\n", Ns, Ns);
+                statistics.framesRejected++;
                 break; 
             }
             else if (response == C_DISC) {
@@ -424,6 +465,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
 
     free(frame);
+    statistics.transmissionTime += ((double)(clock() - startTime) / CLOCKS_PER_SEC) * 1000;
 
     if (acknowledged) {
         printf("[TX] Frame acknowledged successfully.\n");
@@ -444,8 +486,8 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
+    clock_t startTime = clock();
     static int expectedNs = 0;
-
     unsigned char byte;
     unsigned char controlField = 0;
     int i = 0;
@@ -492,6 +534,7 @@ int llread(unsigned char *packet)
                         if (!destuffed) {
                             perror("malloc failed");
                             sendSupervisionFrame(fd, A_RE, rej_control(expectedNs));
+                            statistics.framesRejected++;
                             return -1; 
                         }
 
@@ -499,6 +542,7 @@ int llread(unsigned char *packet)
                         if (destuffedLen < 1) {
                             free(destuffed);
                             sendSupervisionFrame(fd, A_RE, rej_control(expectedNs));
+                            statistics.framesRejected++;
                             return 0;
                         }
 
@@ -507,16 +551,22 @@ int llread(unsigned char *packet)
                         unsigned int receivedNs = (controlField == CI1) ? 1 : 0;
 
                         if (receivedBCC2 == computedBCC2) {
+                            statistics.framesAccepted++;
                             if (receivedNs == expectedNs) {
                                 sendSupervisionFrame(fd, A_RE, rr_control((expectedNs + 1) % 2));
                                 expectedNs = (expectedNs + 1) % 2;
                                 memcpy(packet, destuffed, destuffedLen - 1);
-                                free(destuffed);
+                                free(destuffed);  
+
+                                statistics.framesReceived++;
+                                statistics.receptionTime += ((double)(clock() - startTime) / CLOCKS_PER_SEC) * 1000;
+                                    
                                 return destuffedLen - 1; 
                             } else {
                                 sendSupervisionFrame(fd, A_RE, rr_control(expectedNs));
                                 free(destuffed);
                                 printf("[RX] Duplicate I(%d) received → RR(%d)\n", receivedNs, expectedNs);
+                                statistics.framesRejected++;
                                 return 0; // duplicate frame, ignore
                             }
                         } else {
@@ -550,7 +600,7 @@ int llread(unsigned char *packet)
 int llclose() {
 
     if (fd < 0) {
-    printf("[DBG llclose] Already closed (invalid fd)\n");
+    printf("[llclose] Already closed (invalid fd)\n");
     return 0;
     }
 
@@ -559,14 +609,14 @@ int llclose() {
     int attempts = nRetransmissions; 
     (void) signal(SIGALRM, alarmHandler);
 
-    printf("[DBG llclose] Starting link layer close sequence. Role = %s\n",
+    printf("[llclose] Starting link layer close sequence. Role = %s\n",
            (linkLayer.role == LlTx) ? "Transmitter" : "Receiver");
 
 
     // TRANSMITTER 
 
     if (linkLayer.role == LlTx) {
-        printf("[DBG llclose TX] Sending DISC to initiate disconnection.\n");
+        printf("[llclose TX] Sending DISC to initiate disconnection.\n");
 
         while (attempts > 0 && state != STOP) {
             sendSupervisionFrame(fd, A_SE, C_DISC);
@@ -599,10 +649,11 @@ int llclose() {
                                 state = STOP;
                                 alarm(0);
                                 alarmFlag = FALSE;
-                                printf("[DBG llclose TX] Received DISC from RX, sending UA.\n");
+                                printf("[llclose TX] Received DISC from RX, sending UA.\n");
                                 sendSupervisionFrame(fd, A_SE, C_UA);
-                                printf("[DBG llclose] Closing serial port fd=%d\n", fd);
+                                printf("[llclose] Closing serial port fd=%d\n", fd);
                                 fflush(stdout);
+                                showStatistics();
                                 closeSerialPort();
                                 fd = -1;
                                 return 0;
@@ -614,14 +665,15 @@ int llclose() {
             }
 
             if (alarmFlag) {
-                printf("[DBG llclose TX] Timeout waiting for DISC, retrying...\n");
+                printf("[llclose TX] Timeout waiting for DISC, retrying...\n");
                 attempts--;
                 sleep(1); // 1 second delay
             }
         }
 
-        printf("[DBG llclose TX] Connection close timed out.\n");
+        printf("[llclose TX] Connection close timed out.\n");
         alarm(0);
+        showStatistics();
         closeSerialPort();
         fd = -1;
         return -1;
@@ -631,7 +683,7 @@ int llclose() {
     // RECEIVER SIDE 
 
     else if (linkLayer.role == LlRx) {
-        printf("[DBG llclose RX] Waiting for DISC from transmitter.\n");
+        printf("[llclose RX] Waiting for DISC from transmitter.\n");
 
         alarmFlag = FALSE;
         (void) signal(SIGALRM, alarmHandler);
@@ -661,7 +713,7 @@ int llclose() {
                         if (byte == FLAG) {
                             state = STOP;
                             alarm(0);
-                            printf("[DBG llclose RX] Received DISC from TX.\n");
+                            printf("[llclose RX] Received DISC from TX.\n");
                         } else state = START;
                         break;
                     default: break;
@@ -670,10 +722,11 @@ int llclose() {
         }
 
         if (alarmFlag) {
-            printf("[DBG llclose RX] Timeout waiting for DISC → sending DISC and closing.\n");
+            printf("[llclose RX] Timeout waiting for DISC → sending DISC and closing.\n");
             sendSupervisionFrame(fd, A_RE, C_DISC);
-            printf("[DBG llclose] Closing serial port fd=%d\n", fd);
+            printf("[llclose] Closing serial port fd=%d\n", fd);
             fflush(stdout);
+            showStatistics();
             closeSerialPort();
             fd = -1;
             return -1;
@@ -681,7 +734,7 @@ int llclose() {
 
 
         sendSupervisionFrame(fd, A_RE, C_DISC);
-        printf("[DBG llclose RX] Sent DISC reply to TX.\n");
+        printf("[llclose RX] Sent DISC reply to TX.\n");
 
         state = START;
         alarmFlag = FALSE;
@@ -712,9 +765,10 @@ int llclose() {
                         if (byte == FLAG) {
                             state = STOP;
                             alarm(0);
-                            printf("[DBG llclose RX] Received UA, closing serial port.\n");
-                            printf("[DBG llclose] Closing serial port fd=%d\n", fd);
+                            printf("[llclose RX] Received UA, closing serial port.\n");
+                            printf("[llclose] Closing serial port fd=%d\n", fd);
                             fflush(stdout);
+                            showStatistics();
                             closeSerialPort();
                             fd = -1;
                             return 0;
@@ -725,15 +779,17 @@ int llclose() {
             }
         }
 
-        printf("[DBG llclose RX] Timeout waiting for UA, closing anyway.\n");
-        printf("[DBG llclose] Closing serial port fd=%d\n", fd);
+        printf("[llclose RX] Timeout waiting for UA, closing anyway.\n");
+        printf("[llclose] Closing serial port fd=%d\n", fd);
         fflush(stdout);
+        showStatistics();
         closeSerialPort();
         fd = -1;
         return -1;
     }
 
     else {
+        showStatistics();
         closeSerialPort();
         fd = -1;
         return -1;

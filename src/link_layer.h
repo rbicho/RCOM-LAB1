@@ -43,18 +43,30 @@ int llread(unsigned char *packet);
 // Return 0 on success or -1 on error.
 int llclose();
 
-// Will configure and manage timeout alarms during transmissions.
+// Handles timeout alarms triggered by SIGALRM.
 void alarmHandler(int signal);
 
-unsigned char readControlFrame(int fd);
+// Reads a supervision/control frame (e.g., SET, UA, DISC, RR, REJ) from the serial port.
+// Returns the control byte (C) if a valid frame is received, or 0 if it times out or is invalid.
+unsigned char readControlFrameWithTimeout(void);
 
+// Calculates the BCC2 used for data integrity verification.
 unsigned char BCC2(const unsigned char *data, int size);
 
+// Builds and sends a supervision/control frame through the serial port.
+// Returns the number of bytes written to the serial port.
 int sendSupervisionFrame(int fd, unsigned char addressField, unsigned char controlField);
 
+// Applies byte stuffing to the data field to ensure frame transparency.
+// Returns the number of bytes written to the output buffer.
 int byteStuffing(const unsigned char *input, int inputSize, unsigned char *output);
 
+// Reverses the byte stuffing applied during transmission.
+// Returns the number of bytes written to the output buffer.
 int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *output);
+
+// Displays transmission statistics 
+void showStatistics()
 
 
 #endif // _LINK_LAYER_H_
