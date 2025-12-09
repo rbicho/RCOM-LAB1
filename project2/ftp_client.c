@@ -92,51 +92,25 @@ void parse_ftp_url(const char* url, FTPInfo* info) {
     }
 }
 
-void resolve_hostname(FTPInfo *info) {
-    struct addrinfo hints, *res;
-    int status;
-    
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    
-    status = getaddrinfo(info->host, NULL, &hints, &res);
-    if (status != 0) {
-        fprintf(stderr, "DNS error for %s: %s\n", info->host, gai_strerror(status));
-        
-        if (strcmp(info->host, "netlab1.fe.up.pt") == 0) {
-            strcpy(info->ip, "172.26.128.1");
-            printf("Using fallback IP for NetLab: %s\n", info->ip);
-        } else if (strcmp(info->host, "ftp.up.pt") == 0) {
-            strcpy(info->ip, "193.137.29.15");
-            printf("Using known IP for ftp.up.pt: %s\n", info->ip);
-        } else {
-            exit(1);
-        }
-        return;
+void get_ip(const char *hostname, char *ip) {
+    struct hostent *h;
+
+    if ((h = gethostbyname(hostname)) == NULL) {
+        herror("gethostbyname");
+        exit(1);
     }
-    
-    struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
-    inet_ntop(AF_INET, &(ipv4->sin_addr), info->ip, sizeof(info->ip));
-    freeaddrinfo(res);
-    
-    printf("Resolved %s -> %s\n", info->host, info->ip);
+
+    strcpy(ip, inet_ntoa(*((struct in_addr *) h->h_addr)));
 }
 
 int create_connection_socket(const char* ip, int port) {
     int sockfd;
     struct sockaddr_in server_addr;
-    struct timeval timeout;
     
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Error creating socket");
         return -1;
     }
-    
-    timeout.tv_sec = 10;
-    timeout.tv_usec = 0;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -279,7 +253,7 @@ int download_with_fallback(int control_sock, int data_sock, FTPInfo* ftp_info) {
     
     code = get_response_code(response);
     
-    if (code == 550 || code == 550) {
+    if (code == 550) {
         printf("Strategy 1 failed (code %d). Trying Strategy 2...\n", code);
         
         if (strcmp(ftp_info->directory, "/") != 0 && strlen(ftp_info->directory) > 0) {
@@ -359,10 +333,10 @@ int download_with_fallback(int control_sock, int data_sock, FTPInfo* ftp_info) {
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         printf("Usage: %s ftp://[user:password@]host/path\n", argv[0]);
-        printf("Examples:\n");
+        printf("\nExamples:\n");
+        printf("  %s ftp://ftp.fe.up.pt/pub/README\n", argv[0]);
+        printf("  %s ftp://anonymous:email@example.com@ftp.fe.up.pt/pub/networking/tcpdump/tcpdump.1.gz\n", argv[0]);
         printf("  %s ftp://rcom:rcom@netlab1.fe.up.pt/files/crab.mp4\n", argv[0]);
-        printf("  %s ftp://netlab1.fe.up.pt/pipe.txt\n", argv[0]);
-        printf("  %s ftp://ftp.up.pt/pub/gnu/README\n", argv[0]);
         return -1;
     }
     
@@ -379,7 +353,9 @@ int main(int argc, char* argv[]) {
     printf("Filename: %s\n", ftp_info.filename);
     printf("==================\n");
     
-    resolve_hostname(&ftp_info);
+    char ip[16];
+    get_ip(ftp_info.host, ip);
+    strcpy(ftp_info.ip, ip);
     printf("Server IP: %s\n", ftp_info.ip);
     
     int control_sock = create_connection_socket(ftp_info.ip, 21);
